@@ -310,8 +310,8 @@ def map_ids_to_names(pitches_df, id_list, id_column, name_column):
 pitchers = pitches_df['pitcher'].unique()
 batters = pitches_df['batter'].unique()
 
-pitcher_names = map_ids_to_names(pitches_df, pitchers, 'pitcher', 'Pitcher')
-batter_names = map_ids_to_names(pitches_df, batters, 'batter', 'Batter')
+# pitcher_names = map_ids_to_names(pitches_df, pitchers, 'pitcher', 'Pitcher')
+# batter_names = map_ids_to_names(pitches_df, batters, 'batter', 'Batter')
 
 default_pitcher = pitcher_names[0][0] if pitcher_names and pitcher_names[0] else None
 default_batter = batter_names[0][0] if batter_names and batter_names[0] else None
@@ -319,14 +319,14 @@ default_batter = batter_names[0][0] if batter_names and batter_names[0] else Non
 pitcher_index = next((i for i, group in enumerate(pitcher_names) if default_pitcher in group), 0)
 batter_index = next((i for i, group in enumerate(batter_names) if default_batter in group), 0)
 
-pitcher = st.selectbox("Select Pitcher:", options=[name[0] for name in pitcher_names if name], index=0)
-batter = st.selectbox("Select Batter:", options=[name[0] for name in batter_names if name], index=0)
+pitcher = st.selectbox("Select Pitcher:", options=pitchers, index=0)
+batter = st.selectbox("Select Batter:", options=batters, index=0)
 
 st.write(f"Selected Pitcher: {pitcher}")
 st.write(f"Selected Batter: {batter}")
 
-pitcher_df = pitches_df[pitches_df['Pitcher'] == pitcher]
-batter_df = pitches_df[pitches_df['Batter'] == batter]
+pitcher_df = pitches_df[pitches_df['pitcher'] == pitcher]
+batter_df = pitches_df[pitches_df['batter'] == batter]
 
 recent_rows = pitcher_df[pitcher_df['pitch_type'] != 'Undefined'].sort_values(by=['game_date', 'game_pk'], ascending=False).head(500)
 
