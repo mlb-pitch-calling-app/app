@@ -19,7 +19,8 @@ from constants import(
     count_values,
     median_features,
     cluster_features,
-    numerical_features
+    numerical_features,
+    pitch_type_name
 )
 warnings.filterwarnings('ignore')
 
