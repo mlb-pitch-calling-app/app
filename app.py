@@ -14,19 +14,23 @@ from sklearn.preprocessing import StandardScaler
 import helper_functions as hf
 import warnings
 import time
+import gdown
 from constants import(
     platoon_state_mapping,
     count_values,
     median_features,
     cluster_features,
     numerical_features,
-    pitch_type_name
 )
 warnings.filterwarnings('ignore')
 
+file_id = "10pPM8sHxAEjlWBOAcweERUpQZXdogAfD"
+file_path = "mlb_pitches.csv"
+
 @st.cache_data(ttl=900)
 def load_data():
-    pitches_df = pd.read_csv('mlb_pitches.csv')
+    gdown.download(f"https://drive.google.com/uc?id={file_id}", file_path, quiet=False)
+    pitches_df = pd.read_csv(file_path)
     global_means = pd.read_csv("global_means.csv")
     ids_df = pd.read_csv('ids.csv')
 
@@ -34,8 +38,6 @@ def load_data():
     pitches_df['HRA'] = pitches_df.apply(lambda x: hf.calculate_HRA(x['vy0'], x['ay'], x['release_extension'], x['vx0'], x['ax']), axis=1)
 
     pitches_df = hf.prepare_data(pitches_df, ids_df)
-
-    pitches_df["pitch_type_name"] = pitches_df["pitch_type"].map(pitch_type_name)
 
     return pitches_df, global_means, ids_df
 
@@ -56,9 +58,11 @@ star_ratings = [
     (0.045, "★★★★☆"), (float("inf"), "★★★★★")
 ]
 
-cmap = mcolors.LinearSegmentedColormap.from_list("green_to_white_to_red", 
-                                                [(0, "green"), (0.2, "white"), (0.95, "white"), (1, "red")], 
-                                                N=256)
+cmap = mcolors.LinearSegmentedColormap.from_list(
+    "green_to_white",
+    [(0, "green"), (0.2, "white"), (1, "white")], 
+    N=256
+)
 
 def simulate_synthetic_dataframe(recent_rows, batter_df, pitch_type, balls, strikes):
     synthetic_data = pd.DataFrame(
@@ -259,7 +263,7 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
                 command_score = pitch_command_dict.get(pitch_type, 1)
 
                 if len(recent_rows[recent_rows['pitch_type'] == pitch_type]) >= 20:
-                    sigma = (max(0.25, min(command_score, 2)) * (0.6 + ((balls - strikes) * 0.1)))
+                    sigma = (max(0.25, min(command_score, 2)) * (0.6 + ((balls - strikes) * 0.2)))
                 else: 
                     sigma = 0.8 + ((balls - strikes) * 0.1)
 
@@ -303,8 +307,6 @@ batter_name = st.selectbox("Select Batter:", options=batter_names, index=0)
 
 st.write(f"Selected Pitcher: {pitcher_name}")
 st.write(f"Selected Batter: {batter_name}")
-
-print(pitches_df[pitches_df['player_name'] == pitcher_name]['pitcher'].value_counts().idxmax())
 
 pitcher = pitches_df[pitches_df['player_name'] == pitcher_name]['pitcher'].value_counts().idxmax()
 batter = pitches_df[pitches_df['batter_name'] == batter_name]['batter'].value_counts().idxmax()
