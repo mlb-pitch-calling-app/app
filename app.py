@@ -257,7 +257,7 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
                 # else: 
                 #     sigma = 0.8 + ((balls - strikes) * 0.1)
 
-                sigma = 0.6
+                sigma = 1
 
                 smoothed_weighted_data = gaussian_filter(heatmap_data, sigma=sigma)
                 smoothed_weighted_data = smoothed_weighted_data[1:-1, 1:-1]
@@ -275,6 +275,7 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
                     plt.Rectangle((1, 1), 3, 3, edgecolor='black', facecolor='none', linewidth=3)
                 )
 
+                ax.invert_xaxis()
                 ax.invert_yaxis()
                 st.pyplot(fig)
 
