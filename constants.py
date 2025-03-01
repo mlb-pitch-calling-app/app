@@ -6,7 +6,7 @@ columns_to_keep = [
     'spin_axis', 'release_pos_z', 'release_pos_x', 'release_extension', 'pfx_z', 'pfx_x',
     'plate_z', 'plate_x', 'ax', 'ay', 'az', 'batter', 'stand',
     'inning', 'inning_topbot', 'at_bat_number', 'balls', 'strikes',
-    'description', 'events', 'home_team', 'game_pk', 'game_type', 'delta_run_exp'
+    'description', 'events', 'home_team', 'game_pk', 'game_type', 'delta_run_exp', 'VRA', 'HRA'
 ]
 
 spray_bins = [-np.inf, -67.5, -52.5, -37.5, -22.5, -7.5, 7.5, 22.5, 37.5, 52.5, 67.5, np.inf]
@@ -62,3 +62,21 @@ median_features = [
     'release_speed', 'release_spin_rate', 'spin_axis', 'release_pos_z', 'release_pos_x', 'release_extension', 
     'ax', 'ay', 'az', 'avg_fb_RelSpeed', 'avg_fb_ax0', 'avg_fb_az0', 'avg_fb_RelHeight', 'avg_fb_RelSide'
 ]
+
+pitch_type_name = {
+    "FF": "Four-Seam Fastball",
+    "SL": "Slider",
+    "SI": "Sinker",
+    "CH": "Changeup",
+    "FC": "Cutter",
+    "CU": "Curveball",
+    "ST": "Sweeper",
+    "FS": "Splitter",
+    "KC": "Knuckle Curve",
+    "SV": "Slurve",
+    "EP": "Eephus",
+    "KN": "Knuckleball",
+    "FO": "Forkball",
+    "SC": "Screwball",
+    "CS": "Slow Curve"
+}

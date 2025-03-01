@@ -27,10 +27,16 @@ warnings.filterwarnings('ignore')
 def load_data():
     pitches_df = pd.read_csv('mlb_pitches.csv')
     global_means = pd.read_csv("global_means.csv")
+    ids_df = pd.read_csv('ids.csv')
 
-    pitches_df = hf.prepare_data(pitches_df)
+    pitches_df['VRA'] = pitches_df.apply(lambda x: hf.calculate_VRA(x['vy0'], x['ay'], x['release_extension'], x['vz0'], x['az']), axis=1)
+    pitches_df['HRA'] = pitches_df.apply(lambda x: hf.calculate_HRA(x['vy0'], x['ay'], x['release_extension'], x['vx0'], x['ax']), axis=1)
 
-    return pitches_df, global_means
+    pitches_df = hf.prepare_data(pitches_df, ids_df)
+
+    pitches_df["pitch_type_name"] = pitches_df["pitch_type"].map(pitch_type_name)
+
+    return pitches_df, global_means, ids_df
 
 @st.cache_resource(ttl=900)
 def load_models():
@@ -39,7 +45,7 @@ def load_models():
     scaler = joblib.load("scaler.pkl")
     return rv_model, prev_pitch_model, scaler
 
-pitches_df, global_means = load_data()
+pitches_df, global_means, ids_df = load_data()
 rv_model, prev_pitch_model, scaler = load_models()
 
 star_ratings = [
@@ -165,7 +171,7 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
     )
 
     pitch_type_means = []
-    #pitch_command = []
+    pitch_command = []
 
     for pitch_type in pitch_types:
         pitch_type_df = recent_rows[recent_rows['pitch_type'] == pitch_type]
@@ -182,17 +188,16 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
 
         pitch_type_df = calculate_batter_metrics(pitch_type_df, batter_df)
 
-        ### Issue: No 'VertRelAngle' and 'HorzRelAngle' data
-        # rel_angles = pitch_type_df[['VertRelAngle', 'HorzRelAngle']].dropna()
-        # kmeans = KMeans(n_clusters=1, random_state=100)
-        # kmeans.fit(rel_angles)
-        # center_vert, center_horz = kmeans.cluster_centers_[0]
-        # pitch_type_df['DistanceFromCenter'] = np.sqrt(
-        #     (pitch_type_df['VertRelAngle'] - center_vert) ** 2 +
-        #     (pitch_type_df['HorzRelAngle'] - center_horz) ** 2
-        # )
-        # command_score = pitch_type_df['DistanceFromCenter'].mean()
-        # pitch_command.append((pitch_type, command_score))
+        rel_angles = pitch_type_df[['VRA', 'HRA']].dropna()
+        kmeans = KMeans(n_clusters=1, random_state=100)
+        kmeans.fit(rel_angles)
+        center_vert, center_horz = kmeans.cluster_centers_[0]
+        pitch_type_df['DistanceFromCenter'] = np.sqrt(
+            (pitch_type_df['VRA'] - center_vert) ** 2 +
+            (pitch_type_df['HRA'] - center_horz) ** 2
+        )
+        command_score = pitch_type_df['DistanceFromCenter'].mean()
+        pitch_command.append((pitch_type, command_score))
 
         expected_features = model.get_booster().feature_names
 
@@ -209,7 +214,7 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
         pitch_type_means.append((pitch_type, mean_value))
 
         pitch_type_means_dict = dict(pitch_type_means)
-        #pitch_command_dict = dict(pitch_command)
+        pitch_command_dict = dict(pitch_command)
 
         sorted_pitch_types = sorted(pitch_type_means_dict, key=pitch_type_means_dict.get)[:6]
 
@@ -250,14 +255,12 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
                     unsafe_allow_html=True
                 )
 
-                #command_score = pitch_command_dict.get(pitch_type, 1)
+                command_score = pitch_command_dict.get(pitch_type, 1)
 
-                # if len(recent_rows[recent_rows['pitch_type'] == pitch_type]) >= 20:
-                #     sigma = (max(0.25, min(command_score, 2)) * (0.7 + ((balls - strikes) * 0.1)))
-                # else: 
-                #     sigma = 0.8 + ((balls - strikes) * 0.1)
-
-                sigma = 1
+                if len(recent_rows[recent_rows['pitch_type'] == pitch_type]) >= 20:
+                    sigma = (max(0.25, min(command_score, 2)) * (0.6 + ((balls - strikes) * 0.1)))
+                else: 
+                    sigma = 0.8 + ((balls - strikes) * 0.1)
 
                 smoothed_weighted_data = gaussian_filter(heatmap_data, sigma=sigma)
                 smoothed_weighted_data = smoothed_weighted_data[1:-1, 1:-1]
@@ -288,40 +291,22 @@ if "previous_batter" not in st.session_state:
 if "previous_pitcher" not in st.session_state:
     st.session_state["previous_pitcher"] = None
 
-def map_ids_to_names(pitches_df, id_list, id_column, name_column):
-    """Convert nested ID lists into names based on the most common name in pitches_df."""
-    names_list = []
-    
-    for group in id_list:
-        # Filter the dataframe where ID is in the group
-        filtered_df = pitches_df[pitches_df[id_column].isin(group)]
-        
-        if not filtered_df.empty:
-            # Find the most common name
-            common_name = filtered_df[name_column].mode()
-            names_list.append([common_name[0]] if not common_name.empty else [])
-        else:
-            names_list.append([])  # Empty if no matching rows
-    
-    return names_list
-
 pitchers = pitches_df['pitcher'].unique()
 batters = pitches_df['batter'].unique()
 
-# pitcher_names = map_ids_to_names(pitches_df, pitchers, 'pitcher', 'Pitcher')
-# batter_names = map_ids_to_names(pitches_df, batters, 'batter', 'Batter')
+pitcher_names = pitches_df['player_name'].unique()
+batter_names = pitches_df['batter_name'].unique()
 
-# default_pitcher = pitcher_names[0][0] if pitcher_names and pitcher_names[0] else None
-# default_batter = batter_names[0][0] if batter_names and batter_names[0] else None
+pitcher_name = st.selectbox("Select Pitcher:", options=pitcher_names, index=0)
+batter_name = st.selectbox("Select Batter:", options=batter_names, index=0)
 
-# pitcher_index = next((i for i, group in enumerate(pitcher_names) if default_pitcher in group), 0)
-# batter_index = next((i for i, group in enumerate(batter_names) if default_batter in group), 0)
+st.write(f"Selected Pitcher: {pitcher_name}")
+st.write(f"Selected Batter: {batter_name}")
 
-pitcher = st.selectbox("Select Pitcher:", options=pitchers, index=0)
-batter = st.selectbox("Select Batter:", options=batters, index=0)
+print(pitches_df[pitches_df['player_name'] == pitcher_name]['pitcher'].value_counts().idxmax())
 
-st.write(f"Selected Pitcher: {pitcher}")
-st.write(f"Selected Batter: {batter}")
+pitcher = pitches_df[pitches_df['player_name'] == pitcher_name]['pitcher'].value_counts().idxmax()
+batter = pitches_df[pitches_df['batter_name'] == batter_name]['batter'].value_counts().idxmax()
 
 pitcher_df = pitches_df[pitches_df['pitcher'] == pitcher]
 batter_df = pitches_df[pitches_df['batter'] == batter]

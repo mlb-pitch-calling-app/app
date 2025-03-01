@@ -24,7 +24,7 @@ from constants import (
     pseudo_sample_size
 )
 
-def clean_data(pitches_df):
+def clean_data(pitches_df, ids_df):
     pitches_df = pitches_df[columns_to_keep]
     pitches_df = pitches_df.dropna(subset=['release_speed', 'ax', 'az', 'plate_x', 'plate_z'])
 
@@ -34,7 +34,12 @@ def clean_data(pitches_df):
     pitches_df = pitches_df[(pitches_df['balls'] <= 3) & (pitches_df['strikes'] <= 2)]
     pitches_df.sort_values(by=['game_date', 'game_pk', 'at_bat_number', 'pitch_number'], inplace=True)
 
+    ids_df.rename(columns={'MLBID': 'batter', 'PLAYERNAME': 'batter_name'}, inplace=True)
+    pitches_df = pitches_df.merge(ids_df[['batter', 'batter_name']], on='batter', how='left')
+    pitches_df['player_name'] = pitches_df['player_name'].str.replace(r'([^,]+),\s*(.+)', r'\2 \1', regex=True)
+
     pitches_df['PA_ID'] = pitches_df.groupby(['game_pk', 'inning', 'inning_topbot', 'at_bat_number']).ngroup()
+    pitches_df.loc[(pitches_df["pitcher"] == 694973) & (pitches_df["pitch_type"] == "SI"),"pitch_type"] = "FS"
 
     return pitches_df
 
@@ -107,14 +112,13 @@ def scale_data(pitches_df, save=False):
     scaled_columns = [f"{feature}_Scaled" for feature in numerical_features]
     pitches_df[scaled_columns] = scaler.fit_transform(pitches_df[numerical_features])
 
-    if save:
-        joblib.dump(scaler, "scaler.pkl")
+    joblib.dump(scaler, "scaler.pkl")
 
     return pitches_df
 
 
-def prepare_data(pitches_df):
-    pitches_df = clean_data(pitches_df)
+def prepare_data(pitches_df, ids_df):
+    pitches_df = clean_data(pitches_df, ids_df)
     pitches_df = encode_vars(pitches_df)
     pitches_df = add_fastball_specs(pitches_df)
     pitches_df = bucketize_plate_locations(pitches_df)
@@ -371,3 +375,17 @@ def compute_batter_stuff_value(pitches_df, pivoted_values):
     merged_df['BatterStuffValue'] = weighted_sum
 
     return merged_df
+
+def calculate_VRA(vy0, ay, release_extension, vz0, az):
+    vy_s = -np.sqrt(vy0**2 - 2 * ay * (60.5 - release_extension - 50))
+    t_s = (vy_s - vy0) / ay
+    vz_s = vz0 - az * t_s
+    VRA = -np.arctan(vz_s / vy_s) * (180 / np.pi)
+    return VRA
+
+def calculate_HRA(vy0, ay, release_extension, vx0, ax):
+    vy_s = -np.sqrt(vy0**2 - 2 * ay * (60.5 - release_extension - 50))
+    t_s = (vy_s - vy0) / ay
+    vx_s = vx0 - ax * t_s
+    HRA = -np.arctan(vx_s / vy_s) * (180 / np.pi)
+    return HRA
