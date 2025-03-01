@@ -76,11 +76,6 @@ def simulate_synthetic_dataframe(recent_rows, batter_df, pitch_type, balls, stri
     platoon_state_encoded = platoon_state_mapping[(pitcher_throws_mode, batter_side_mode)]
     synthetic_data['PlatoonStateEncoded'] = platoon_state_encoded
 
-    synthetic_data['BatterLeagueEncoded'] = (
-        batter_df.sort_values(['game_date', 'game_pk'], ascending=False)
-        .iloc[0]['BatterLeagueEncoded']
-    )
-
     medians = recent_rows[recent_rows['pitch_type'] == pitch_type].sort_values(by=['game_date', 'game_pk'], ascending=False)[median_features].median().to_dict()
 
     for feature, median_value in medians.items():
