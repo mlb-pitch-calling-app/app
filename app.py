@@ -307,8 +307,8 @@ def map_ids_to_names(pitches_df, id_list, id_column, name_column):
     
     return names_list
 
-pitchers = pitches_df['pitcher_id'].unique()
-batters = pitches_df['batter_id'].unique()
+pitchers = pitches_df['pitcher'].unique()
+batters = pitches_df['batter'].unique()
 
 pitcher_names = map_ids_to_names(pitches_df, pitchers, 'pitcher', 'Pitcher')
 batter_names = map_ids_to_names(pitches_df, batters, 'batter', 'Batter')
