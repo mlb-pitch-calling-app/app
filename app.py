@@ -50,7 +50,7 @@ star_ratings = [
 ]
 
 cmap = mcolors.LinearSegmentedColormap.from_list("green_to_white_to_red", 
-                                                [(0, "green"), (0.2, "white"), (0.8, "white"), (1, "red")], 
+                                                [(0, "green"), (0.2, "white"), (0.95, "white"), (1, "red")], 
                                                 N=256)
 
 def simulate_synthetic_dataframe(recent_rows, batter_df, pitch_type, balls, strikes):
