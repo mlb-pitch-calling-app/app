@@ -170,7 +170,7 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
     )
 
     pitch_type_means = []
-    pitch_command = []
+    #pitch_command = []
 
     for pitch_type in pitch_types:
         pitch_type_df = recent_rows[recent_rows['pitch_type'] == pitch_type]
@@ -188,16 +188,16 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
         pitch_type_df = calculate_batter_metrics(pitch_type_df, batter_df)
 
         ### Issue: No 'VertRelAngle' and 'HorzRelAngle' data
-        rel_angles = pitch_type_df[['VertRelAngle', 'HorzRelAngle']].dropna()
-        kmeans = KMeans(n_clusters=1, random_state=100)
-        kmeans.fit(rel_angles)
-        center_vert, center_horz = kmeans.cluster_centers_[0]
-        pitch_type_df['DistanceFromCenter'] = np.sqrt(
-            (pitch_type_df['VertRelAngle'] - center_vert) ** 2 +
-            (pitch_type_df['HorzRelAngle'] - center_horz) ** 2
-        )
-        command_score = pitch_type_df['DistanceFromCenter'].mean()
-        pitch_command.append((pitch_type, command_score))
+        # rel_angles = pitch_type_df[['VertRelAngle', 'HorzRelAngle']].dropna()
+        # kmeans = KMeans(n_clusters=1, random_state=100)
+        # kmeans.fit(rel_angles)
+        # center_vert, center_horz = kmeans.cluster_centers_[0]
+        # pitch_type_df['DistanceFromCenter'] = np.sqrt(
+        #     (pitch_type_df['VertRelAngle'] - center_vert) ** 2 +
+        #     (pitch_type_df['HorzRelAngle'] - center_horz) ** 2
+        # )
+        # command_score = pitch_type_df['DistanceFromCenter'].mean()
+        # pitch_command.append((pitch_type, command_score))
 
         expected_features = model.get_booster().feature_names
 
@@ -214,7 +214,7 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
         pitch_type_means.append((pitch_type, mean_value))
 
         pitch_type_means_dict = dict(pitch_type_means)
-        pitch_command_dict = dict(pitch_command)
+        #pitch_command_dict = dict(pitch_command)
 
         sorted_pitch_types = sorted(pitch_type_means_dict, key=pitch_type_means_dict.get)[:6]
 
@@ -255,12 +255,14 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
                     unsafe_allow_html=True
                 )
 
-                command_score = pitch_command_dict.get(pitch_type, 1)
+                #command_score = pitch_command_dict.get(pitch_type, 1)
 
-                if len(recent_rows[recent_rows['pitch_type'] == pitch_type]) >= 20:
-                    sigma = (max(0.25, min(command_score, 2)) * (0.7 + ((balls - strikes) * 0.1)))
-                else: 
-                    sigma = 0.8 + ((balls - strikes) * 0.1)
+                # if len(recent_rows[recent_rows['pitch_type'] == pitch_type]) >= 20:
+                #     sigma = (max(0.25, min(command_score, 2)) * (0.7 + ((balls - strikes) * 0.1)))
+                # else: 
+                #     sigma = 0.8 + ((balls - strikes) * 0.1)
+
+                sigma = 0.6
 
                 smoothed_weighted_data = gaussian_filter(heatmap_data, sigma=sigma)
                 smoothed_weighted_data = smoothed_weighted_data[1:-1, 1:-1]
