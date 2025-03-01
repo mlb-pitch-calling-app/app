@@ -152,7 +152,7 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
         raise ValueError(f"No matching rows found for pitcher: {pitcher_id}")
 
     if not batter_df.empty:
-        batter_side_mode = batter_df['BatterSide'].mode().iloc[0]
+        batter_side_mode = batter_df['stand'].mode().iloc[0]
     else:
         raise ValueError(f"No matching rows found for batter: {batter_id}")
 
