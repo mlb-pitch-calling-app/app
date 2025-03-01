@@ -10,12 +10,11 @@ from constants import rv_features, rv_target
 import warnings
 warnings.filterwarnings('ignore')
 
-pitches_df = pd.read_csv('all_pitches.csv')
+pitches_df = pd.read_csv('mlb_pitches.csv')
 global_means = pd.read_csv('global_means.csv')
 
-pitches_df = hf.prepare_data(pitches_df, game_only=True)
-
-pitches_df = add_probabilities(pitches_df)
+pitches_df = hf.prepare_data(pitches_df)
+pitches_df = hf.add_probabilities(pitches_df)
 pitches_df, pivoted_values = hf.calculate_shrunken_means(pitches_df, global_means)
 pitches_df = hf.compute_batter_stuff_value(pitches_df, pivoted_values)
 

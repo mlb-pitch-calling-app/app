@@ -10,10 +10,6 @@ import joblib
 from datetime import datetime
 from constants import (
     columns_to_keep,
-    bb_features,
-    spray_bins,
-    spray_labels,
-    batter_league_encoding,
     platoon_state_mapping,
     count_conditions,
     count_values,
@@ -28,303 +24,82 @@ from constants import (
     pseudo_sample_size
 )
 
-def clean_data(pitches_df, game_only=False):
+def clean_data(pitches_df):
     pitches_df = pitches_df[columns_to_keep]
-    pitches_df = pitches_df.dropna(subset=['RelSpeed', 'ax0', 'az0', 'PlateLocSide', 'PlateLocHeight'])
+    pitches_df = pitches_df.dropna(subset=['release_speed', 'ax', 'az', 'plate_x', 'plate_z'])
 
-    batter_side_mode = pitches_df.groupby(['BatterId', 'PitcherThrows'])['BatterSide'].agg(lambda x: x.mode()[0] if not x.mode().empty else None).to_dict()
-    pitches_df['BatterSide'] = pitches_df.apply(lambda row: batter_side_mode.get((row['BatterId'], row['PitcherThrows']), row['BatterSide']) if pd.isna(row['BatterSide']) else row['BatterSide'], axis=1)
+    pitches_df['game_date'] = pd.to_datetime(pitches_df['game_date'], errors='coerce')
+    pitches_df = pitches_df.dropna(subset=['game_date'])
+    pitches_df = pitches_df[pitches_df['game_type'] == 'R']
+    pitches_df = pitches_df[(pitches_df['balls'] <= 3) & (pitches_df['strikes'] <= 2)]
+    pitches_df.sort_values(by=['game_date', 'game_pk', 'at_bat_number', 'pitch_number'], inplace=True)
 
-    pitcher_throws_mode = pitches_df.groupby(['PitcherId', 'BatterSide'])['PitcherThrows'].agg(lambda x: x.mode()[0] if not x.mode().empty else None).to_dict()
-    pitches_df['PitcherThrows'] = pitches_df.apply(lambda row: pitcher_throws_mode.get((row['PitcherId'], row['BatterSide']), row['PitcherThrows']) if pd.isna(row['PitcherThrows']) else row['PitcherThrows'], axis=1)
-
-    pitches_df['Date'] = pd.to_datetime(pitches_df['Date'], errors='coerce')
-    pitches_df = pitches_df.dropna(subset=['Date'])
-
-    if game_only:
-        date_ranges = [
-            ('2025-02-14', '2025-07-01'),
-            ('2024-02-16', '2024-06-24'),
-            ('2023-02-17', '2023-06-26'),
-            ('2022-02-18', '2022-06-22')
-        ]
-        
-        pitches_df = pd.concat([
-            pitches_df[(pitches_df['Date'] >= pd.to_datetime(start)) & (pitches_df['Date'] <= pd.to_datetime(end))]
-            for start, end in date_ranges
-        ])
-        
-        pitches_df = pitches_df[(pitches_df['PitcherTeam'] != 'GEO_PRA') & (pitches_df['BatterTeam'] != 'GEO_PRA')]
-
-    pitches_df = pitches_df[(pitches_df['Level'] == 'D1') | (pitches_df['Level'] == 'TeamExclusive') | (pitches_df['Level'] == 'D3')]
-
-    pitches_df = pitches_df[(pitches_df['Balls'] <= 3) & (pitches_df['Strikes'] <= 2)]
-    pitches_df = pitches_df[pitches_df['PitcherThrows'].isin(['Left', 'Right'])]
-
-    pitches_df.loc[pitches_df['PlayResult'] == 'FieldersChoice', 'PlayResult'] = 'Out'
-
-    pitches_df['PA_ID'] = (
-        pitches_df.groupby(['GameUID', 'Inning', 'Top/Bottom', 'PAofInning']).ngroup()
-    )
-    
-    pitches_df.loc[
-        (pitches_df['PitchCall'].isin(['BallCalled', 'BallinDirt', 'BallIntentional'])) &
-        (pitches_df['Balls'] == 3),
-        'PlayResult'
-    ] = 'Walk'
-
-    pitches_df.loc[
-        (pitches_df['PitchCall'].isin(['StrikeCalled', 'StrikeSwinging'])) &
-        (pitches_df['Strikes'] == 2),
-        'PlayResult'
-    ] = 'StrikeOut'
-
-    pitches_df.loc[
-        pitches_df['PitchCall'] == 'HitByPitch',
-        'PlayResult'
-    ] = 'HitByPitch'
+    pitches_df['PA_ID'] = pitches_df.groupby(['game_pk', 'inning', 'inning_topbot', 'at_bat_number']).ngroup()
 
     return pitches_df
-
-
-def calculate_game_metrics(pitches_df):
-    date_ranges = [
-        ('2025-02-14', '2025-07-01'),
-        ('2024-02-16', '2024-06-24'),
-        ('2023-02-17', '2023-06-26'),
-        ('2022-02-18', '2022-06-22')
-    ]
-    
-    in_game_df = pd.concat([
-        pitches_df[(pitches_df['Date'] >= pd.to_datetime(start)) & (pitches_df['Date'] <= pd.to_datetime(end))]
-        for start, end in date_ranges
-    ])
-    
-    in_game_df = in_game_df[(in_game_df['PitcherTeam'] != 'GEO_PRA') & (in_game_df['BatterTeam'] != 'GEO_PRA')]
-
-    grouped = in_game_df.groupby(['GameUID', 'Top/Bottom'])
-
-    game_df = grouped.agg(
-        sum_runs=('RunsScored', 'sum'),
-        num_single=('PlayResult', lambda x: (x == 'Single').sum()),
-        num_double=('PlayResult', lambda x: (x == 'Double').sum()),
-        num_triple=('PlayResult', lambda x: (x == 'Triple').sum()),
-        num_homerun=('PlayResult', lambda x: (x == 'HomeRun').sum()),
-        num_walk=('PlayResult', lambda x: (x == 'Walk').sum()),
-        num_hitbypitch=('PlayResult', lambda x: (x == 'HitByPitch').sum()),
-    ).reset_index()
-
-    return game_df
-
-
-def predict_pa_run_value(game_df):    
-    game_df['sum_runs'] = pd.to_numeric(game_df['sum_runs'], errors='coerce')
-    game_df = game_df.dropna(subset=['sum_runs'])
-    
-    X = game_df[['num_single', 'num_double', 'num_triple', 'num_homerun', 'num_walk', 'num_hitbypitch']]
-    y = game_df['sum_runs']
-
-    model = LinearRegression()
-    model.fit(X, y)
-
-    coefficients = pd.Series(model.coef_, index=X.columns)
-
-    return coefficients
-
-
-def calculate_out_pa_run_value(pitches_df, coefficients):
-    total_outcomes = pitches_df['PlayResult'].isin(
-        ['Out', 'StrikeOut', 'Single', 'Double', 'Triple', 'HomeRun', 'Walk', 'HitByPitch']
-    ).sum()
-
-    outcome_probs = {
-        play_result: (pitches_df['PlayResult'] == play_result).sum() / total_outcomes
-        for play_result in ['Single', 'Double', 'Triple', 'HomeRun', 'Walk', 'HitByPitch']
-    }
-
-    pa_run_value_out = sum(
-        outcome_probs[play_result] * -coefficients[f'num_{play_result.lower()}']
-        for play_result in outcome_probs
-    )
-
-    return pa_run_value_out
-
-
-def assign_pa_run_values(pitches_df, coefficients, pa_run_value_out):
-    play_result_to_coef = {
-        'Single': coefficients['num_single'],
-        'Double': coefficients['num_double'],
-        'Triple': coefficients['num_triple'],
-        'HomeRun': coefficients['num_homerun'],
-        'Walk': coefficients['num_walk'],
-        'HitByPitch': coefficients['num_hitbypitch'],
-    }
-
-    pitches_df['PARunValue'] = pitches_df['PlayResult'].map(play_result_to_coef)
-    pitches_df.loc[pitches_df['PlayResult'].isin(['Out', 'StrikeOut']), 'PARunValue'] = pa_run_value_out
-    pitches_df.loc[~pitches_df['PlayResult'].isin(play_result_to_coef.keys() | {'Out', 'StrikeOut'}), 'PARunValue'] = np.nan
-
-    pitches_df['PARunValue'] = pitches_df.groupby('PA_ID')['PARunValue'].transform('max')
-    pitches_df['PrePitchRunValue'] = pitches_df.groupby(['Balls', 'Strikes'])['PARunValue'].transform('mean')
-
-    return pitches_df
-
-
-def assign_post_pitch_run_value(pitches_df):
-    grouped_means = pitches_df.groupby(['Balls', 'Strikes'])['PARunValue'].mean()
-
-    pitches_df['PostPitchRunValue'] = np.nan
-
-    mask_ball = pitches_df['PitchCall'].isin(['BallCalled', 'BallinDirt'])
-    pitches_df.loc[mask_ball, 'PostPitchRunValue'] = pitches_df[mask_ball].apply(
-        lambda row: grouped_means.get((row['Balls'] + 1, row['Strikes']), np.nan)
-        if row['Balls'] + 1 <= 3 else np.nan, axis=1
-    )
-
-    mask_strike = pitches_df['PitchCall'].isin(['StrikeCalled', 'StrikeSwinging'])
-    pitches_df.loc[mask_strike, 'PostPitchRunValue'] = pitches_df[mask_strike].apply(
-        lambda row: grouped_means.get((row['Balls'], row['Strikes'] + 1), np.nan)
-        if row['Strikes'] + 1 <= 2 else np.nan, axis=1
-    )
-
-    mask_foul = pitches_df['PitchCall'].isin(['FoulBall', 'FoulBallNotFieldable', 'FoulBallFieldable'])
-    pitches_df.loc[mask_foul, 'PostPitchRunValue'] = pitches_df[mask_foul].apply(
-        lambda row: grouped_means.get((row['Balls'], row['Strikes'] + 1), np.nan)
-        if row['Strikes'] + 1 <= 2 else grouped_means.get((row['Balls'], row['Strikes']), np.nan), axis=1
-    )
-
-    pitches_df.loc[pitches_df['PostPitchRunValue'].isna(), 'PostPitchRunValue'] = pitches_df['PARunValue']
-    pitches_df['DeltaRunValue'] = pitches_df['PostPitchRunValue'] - pitches_df['PrePitchRunValue']
-
-    return pitches_df
-
-
-def add_run_value(pitches_df):
-    game_df = calculate_game_metrics(pitches_df)
-
-    coefficients = predict_pa_run_value(game_df)
-    pa_run_value_out = calculate_out_pa_run_value(pitches_df, coefficients)
-
-    pitches_df = assign_pa_run_values(pitches_df, coefficients, pa_run_value_out)
-    pitches_df = assign_post_pitch_run_value(pitches_df)
-
-    return pitches_df
-
-
-def bucketize_spray_angle(pitches_df):
-    pitches_df['DirectionBucket'] = pd.cut(
-        pitches_df['Direction'], bins=spray_bins, labels=spray_labels
-    ).astype(pd.Int32Dtype())
-
-    return pitches_df
-
-
-def apply_batted_ball_model(pitches_df):
-    batted_ball_model = joblib.load('batted_ball_model.pkl')
-    pitches_df = bucketize_spray_angle(pitches_df)
-
-    batted_ball_df = pitches_df[pitches_df['PitchCall'] == 'InPlay']
-    batted_ball_df = batted_ball_df.dropna(subset=['ExitSpeed', 'Angle', 'DirectionBucket'])
-
-    batted_ball_df['PredictedDeltaRunValue'] = batted_ball_model.predict(batted_ball_df[bb_features])
-    pitches_df.loc[batted_ball_df.index, 'DeltaRunValue'] = batted_ball_df['PredictedDeltaRunValue']
-
-    return pitches_df
-
 
 def encode_vars(pitches_df):
-    pitches_df['Date'] = pd.to_datetime(pitches_df['Date'])
-    pitches_df['Year'] = pitches_df['Date'].dt.year
+    pitches_df['year'] = pitches_df['game_date'].dt.year
 
-    home_team_year_mode_league = (
-        pitches_df.groupby(['HomeTeam', 'Year'])['League']
-        .agg(lambda x: x.mode()[0] if not x.mode().empty else np.nan)
-        .reset_index()
-        .rename(columns={'League': 'BatterLeague'})
-    )
-
-    pitches_df = pitches_df.merge(
-        home_team_year_mode_league,
-        left_on=['BatterTeam', 'Year'],
-        right_on=['HomeTeam', 'Year'],
-        how='left'
-    )
-
-    pitches_df['BatterLeagueEncoded'] = pitches_df['BatterLeague'].map(batter_league_encoding)
-
-    pitches_df['PlatoonStateEncoded'] = pitches_df[['PitcherThrows', 'BatterSide']].apply(
-        lambda x: platoon_state_mapping.get((x['PitcherThrows'], x['BatterSide'])), axis=1
+    pitches_df['PlatoonStateEncoded'] = pitches_df[['p_throws', 'stand']].apply(
+        lambda x: platoon_state_mapping.get((x['p_throws'], x['stand'])), axis=1
     )
 
     pitches_df['CountEncoded'] = np.select(
-        [pitches_df[['Balls', 'Strikes']].apply(tuple, axis=1).isin(condition) for condition in count_conditions],
+        [pitches_df[['balls', 'strikes']].apply(tuple, axis=1).isin(condition) for condition in count_conditions],
         count_values,
         default=np.nan
     )
-
-    pitches_df['TaggedPitchType'] = pitches_df['TaggedPitchType'].replace({
-        'FourSeamFastBall': 'Fastball',
-        'TwoSeamFastBall': 'Sinker'
-    })
-
-    pitches_df['PitchType'] = np.where(
-        pitches_df['TaggedPitchType'] != 'Undefined',
-        pitches_df['TaggedPitchType'],
-        pitches_df['AutoPitchType']
-    )
-
-    pitches_df['PitchGroupEncoded'] = pitches_df['PitchType'].map(pitch_group_mapping)
+    
+    pitches_df[(pitches_df['pitch_type'] != 'FA') & (pitches_df['pitch_type'] != 'PO')]
+    pitches_df['PitchGroupEncoded'] = pitches_df['pitch_type'].map(pitch_group_mapping)
 
     return pitches_df
 
 
-def add_fastball_specs(pitches_df):
-    pitches_df['UTCDateTime'] = pd.to_datetime(pitches_df['UTCDateTime'])
-    
-    pitches_df['Season'] = pitches_df['UTCDateTime'].dt.year
-
+def add_fastball_specs(pitches_df):    
     common_pitch_type = (
         pitches_df[pitches_df['PitchGroupEncoded'] == 0]
-        .groupby(['PitcherId', 'BatterSide', 'Season'])['TaggedPitchType']
+        .groupby(['pitcher', 'stand', 'year'])['pitch_type']
         .agg(lambda x: x.mode().iloc[0] if not x.mode().empty else None)
         .reset_index()
-        .rename(columns={'TaggedPitchType': 'MostCommonPitchType'})
+        .rename(columns={'pitch_type': 'MostCommonPitchType'})
     )
 
-    pitches_df = pitches_df.merge(common_pitch_type, on=['PitcherId', 'BatterSide', 'Season'], how='left')
+    pitches_df = pitches_df.merge(common_pitch_type, on=['pitcher', 'stand', 'year'], how='left')
 
-    subset_df = pitches_df[pitches_df['TaggedPitchType'] == pitches_df['MostCommonPitchType']]
+    subset_df = pitches_df[pitches_df['pitch_type'] == pitches_df['MostCommonPitchType']]
 
     medians = (
         subset_df
-        .groupby(['PitcherId', 'BatterSide', 'Season'])
-        [['RelSpeed', 'ax0', 'az0', 'RelHeight', 'RelSide']]
+        .groupby(['pitcher', 'stand', 'year'])
+        [['release_speed', 'ax', 'az', 'release_pos_z', 'release_pos_x']]
         .median()
         .reset_index()
         .rename(columns={
-            'RelSpeed': 'avg_fb_RelSpeed',
-            'ax0': 'avg_fb_ax0',
-            'az0': 'avg_fb_az0',
-            'RelHeight': 'avg_fb_RelHeight',
-            'RelSide': 'avg_fb_RelSide'
+            'release_speed': 'avg_fb_RelSpeed',
+            'ax': 'avg_fb_ax0',
+            'az': 'avg_fb_az0',
+            'release_pos_z': 'avg_fb_RelHeight',
+            'release_pos_x': 'avg_fb_RelSide'
         })
     )
 
-    pitches_df = pitches_df.merge(medians, on=['PitcherId', 'BatterSide', 'Season'], how='left')
+    pitches_df = pitches_df.merge(medians, on=['pitcher', 'stand', 'year'], how='left')
 
     return pitches_df
 
 
 def bucketize_plate_locations(pitches_df):
-    pitches_df['PlateLocSideBucket'] = pitches_df['PlateLocSide'].apply(lambda x: side_buckets[np.argmin(np.abs(side_buckets - x))])
-    pitches_df['PlateLocHeightBucket'] = pitches_df['PlateLocHeight'].apply(lambda x: height_buckets[np.argmin(np.abs(height_buckets - x))])
+    pitches_df['PlateLocSideBucket'] = pitches_df['plate_x'].apply(lambda x: side_buckets[np.argmin(np.abs(side_buckets - x))])
+    pitches_df['PlateLocHeightBucket'] = pitches_df['plate_z'].apply(lambda x: height_buckets[np.argmin(np.abs(height_buckets - x))])
 
     return pitches_df
 
 
 def scale_data(pitches_df, save=False):
-    pitches_df['BatterLefty'] = (pitches_df['BatterSide'] == 'Left').astype(int)
-    pitches_df['PitcherLefty'] = (pitches_df['PitcherThrows'] == 'Left').astype(int)
+    pitches_df['BatterLefty'] = (pitches_df['stand'] == 'L').astype(int)
+    pitches_df['PitcherLefty'] = (pitches_df['p_throws'] == 'L').astype(int)
 
     pitches_df = pitches_df.dropna(subset=cluster_features)
 
@@ -338,51 +113,46 @@ def scale_data(pitches_df, save=False):
     return pitches_df
 
 
-def prepare_data(pitches_df, game_only=False):
-    pitches_df = clean_data(pitches_df, game_only)
-    pitches_df = add_run_value(pitches_df)
-
-    pitches_df = apply_batted_ball_model(pitches_df)
+def prepare_data(pitches_df):
+    pitches_df = clean_data(pitches_df)
     pitches_df = encode_vars(pitches_df)
-
     pitches_df = add_fastball_specs(pitches_df)
     pitches_df = bucketize_plate_locations(pitches_df)
-
     pitches_df = scale_data(pitches_df)
 
     return pitches_df
 
 
 def add_prev_pitch(pitches_df):
-    pitches_df = pitches_df.sort_values(by=['Date', 'PitcherId', 'BatterId', 'PA_ID', 'PitchNo'])
+    pitches_df = pitches_df.sort_values(by=['game_date', 'pitcher', 'batter', 'PA_ID', 'pitch_number'])
 
     pitches_df['prev_pitch'] = (
-        (pitches_df['PitchNo'] == pitches_df['PitchNo'].shift(-1) - 1) &
-        (pitches_df['Date'] == pitches_df['Date'].shift(-1)) &
-        (pitches_df['PitcherId'] == pitches_df['PitcherId'].shift(-1)) &
-        (pitches_df['BatterId'] == pitches_df['BatterId'].shift(-1)) &
+        (pitches_df['pitch_number'] == pitches_df['pitch_number'].shift(-1) - 1) &
+        (pitches_df['game_date'] == pitches_df['game_date'].shift(-1)) &
+        (pitches_df['pitcher'] == pitches_df['pitcher'].shift(-1)) &
+        (pitches_df['batter'] == pitches_df['batter'].shift(-1)) &
         (pitches_df['PA_ID'] == pitches_df['PA_ID'].shift(-1))
     )
 
     pitches_df['prev_pitch'] = pitches_df['prev_pitch'].shift(1)
 
-    pitches_df['prev_pitch_RelSpeed'] = pitches_df['RelSpeed'].shift(1)
-    pitches_df['prev_pitch_HorzBreak'] = pitches_df['HorzBreak'].shift(1)
-    pitches_df['prev_pitch_InducedVertBreak'] = pitches_df['InducedVertBreak'].shift(1)
+    pitches_df['prev_pitch_RelSpeed'] = pitches_df['release_speed'].shift(1)
+    pitches_df['prev_pitch_HorzBreak'] = pitches_df['pfx_x'].shift(1)
+    pitches_df['prev_pitch_InducedVertBreak'] = pitches_df['pfx_z'].shift(1)
     pitches_df['prev_pitch_PlateLocSideBucket'] = pitches_df['PlateLocSideBucket'].shift(1)
     pitches_df['prev_pitch_PlateLocHeightBucket'] = pitches_df['PlateLocHeightBucket'].shift(1)
-    pitches_df['prev_pitch_PitchCall'] = pitches_df['PitchCall'].shift(1)
-    pitches_df['prev_pitch_PitchType'] = pitches_df['PitchType'].shift(1)
+    pitches_df['prev_pitch_PitchCall'] = pitches_df['description'].shift(1)
+    pitches_df['prev_pitch_PitchType'] = pitches_df['pitch_type'].shift(1)
 
     pitches_df['prev_pitch_PitchCall'] = pitches_df['prev_pitch_PitchCall'].apply(
-        lambda x: 0 if x in ['BallCalled', 'BallinDirt'] else
-        1 if x == 'StrikeCalled' else
-        2 if x == 'StrikeSwinging' else
-        3 if x in ['FoulBall', 'FoulBallNotFieldable', 'FoulBallFieldable'] else
+        lambda x: 0 if x in ['ball', 'blocked_ball'] else
+        1 if x == 'called_strike' else
+        2 if x in ['foul_tip', 'swinging_strike', 'swinging_strike_blocked', 'missed_bunt'] else
+        3 if x in ['foul', 'foul_bunt'] else
         4
     )
 
-    pitches_df['prev_pitch_SamePitch'] = (pitches_df['PitchType'] == pitches_df['prev_pitch_PitchType']).astype(int)
+    pitches_df['prev_pitch_SamePitch'] = (pitches_df['pitch_type'] == pitches_df['prev_pitch_PitchType']).astype(int)
 
     prev_pitch_invalid = pitches_df['prev_pitch'].isna() | (pitches_df['prev_pitch'] == False)
 
@@ -398,10 +168,10 @@ def add_prev_pitch(pitches_df):
 def fit_gmms(pitches_df):
     gmm_models = {}
 
-    for pitcher_side in ['Left', 'Right']:
+    for pitcher_side in ['L', 'R']:
         for pitch_group in [0, 1, 2]:
             group_df = pitches_df[
-                (pitches_df['PitcherThrows'] == pitcher_side) & 
+                (pitches_df['p_throws'] == pitcher_side) & 
                 (pitches_df['PitchGroupEncoded'] == pitch_group)
             ]
 
@@ -441,8 +211,8 @@ def add_probabilities(pitches_df):
 
     prob_dfs = []
 
-    pitches_df = pitches_df[pitches_df['PitcherThrows'].isin(['Left', 'Right'])]
-    grouped = pitches_df.groupby(['PitcherThrows', 'PitchGroupEncoded'])
+    pitches_df = pitches_df[pitches_df['p_throws'].isin(['L', 'R'])]
+    grouped = pitches_df.groupby(['p_throws', 'PitchGroupEncoded'])
 
     for (pitcher_side, pitch_group), group in grouped:
         gmm_key = f"{pitcher_side}_PitchGroup_{int(pitch_group)}"
@@ -484,21 +254,21 @@ def calculate_global_means(pitches_df):
     pitches_df = add_probabilities(pitches_df)
     results = []
 
-    for (model, pitch_group), group in pitches_df.groupby(['PitcherThrows', 'PitchGroupEncoded']):
+    for (model, pitch_group), group in pitches_df.groupby(['p_throws', 'PitchGroupEncoded']):
         for cluster in range(num_clusters):
             cluster_col = f'prob_{cluster}'
 
             if cluster_col not in group.columns:
                 continue
             
-            group = group.drop_duplicates(subset=['PitcherThrows', 'PitchGroupEncoded', cluster_col])
+            group = group.drop_duplicates(subset=['p_throws', 'PitchGroupEncoded', cluster_col])
 
             cluster_weights = group[cluster_col]
             if cluster_weights.sum() == 0:
                 continue
 
             weighted_mean = (
-                (group['DeltaRunValue'] * cluster_weights).sum() /
+                (group['delta_run_exp'] * cluster_weights).sum() /
                 cluster_weights.sum()
             )
 
@@ -518,18 +288,16 @@ def calculate_global_means(pitches_df):
 def calculate_shrunken_means(pitches_df, global_means, batter=None):
     results = []
 
-    if pitches_df['UTCDateTime'].dtype == 'object':
-        pitches_df['UTCDateTime'] = pd.to_datetime(pitches_df['UTCDateTime'])
-    current_day = pitches_df['UTCDateTime'].max().normalize()
+    if pitches_df['game_date'].dtype == 'object':
+        pitches_df['game_date'] = pd.to_datetime(pitches_df['game_date'])
+    current_day = pitches_df['game_date'].max().normalize()
 
-    pitches_df['DayDiff'] = (current_day - pitches_df['UTCDateTime'].dt.normalize()).dt.days
+    pitches_df['DayDiff'] = (current_day - pitches_df['game_date'].dt.normalize()).dt.days
     pitches_df['DayWeight'] = 0.999 ** pitches_df['DayDiff']
-    pitches_df['Model'] = pitches_df['PitcherThrows']
+    pitches_df['Model'] = pitches_df['p_throws']
     global_means['Model'] = global_means['Model'].astype(str)
 
-    prob_columns = [f'prob_{i}' for i in range(num_clusters)]
-
-    for (batter_id, pitcher_throws), group in pitches_df.groupby(['BatterId', 'PitcherThrows']):
+    for (batter_id, pitcher_throws), group in pitches_df.groupby(['batter', 'p_throws']):
         if batter is not None and batter_id != batter:
             continue
 
@@ -545,7 +313,7 @@ def calculate_shrunken_means(pitches_df, global_means, batter=None):
             total_weights = time_weighted_probs.sum()
 
             if total_weights > 0:
-                weighted_mean = (group['DeltaRunValue'] * time_weighted_probs).sum() / total_weights
+                weighted_mean = (group['delta_run_exp'] * time_weighted_probs).sum() / total_weights
             else:
                 weighted_mean = 0
 
@@ -565,14 +333,14 @@ def calculate_shrunken_means(pitches_df, global_means, batter=None):
             })
 
         cluster_stats_df = pd.DataFrame(cluster_stats)
-        cluster_stats_df['BatterId'] = batter_id
+        cluster_stats_df['batter'] = batter_id
         cluster_stats_df['Model'] = pitcher_throws
         results.append(cluster_stats_df)
 
     combined_stats = pd.concat(results).reset_index(drop=True)
     
     pivoted_values = combined_stats.pivot(
-        index=['BatterId', 'Model'],
+        index=['batter', 'Model'],
         columns='Cluster',
         values='ShrunkenMean_DeltaRunValue'
     ).reset_index()
@@ -588,8 +356,8 @@ def compute_batter_stuff_value(pitches_df, pivoted_values):
     merged_df = pitches_df.merge(
         pivoted_values,
         how='left',
-        left_on=['BatterId', 'Model'],
-        right_on=['BatterId', 'Model']
+        left_on=['batter', 'Model'],
+        right_on=['batter', 'Model']
     )
     
     weighted_sum = 0

@@ -25,10 +25,10 @@ warnings.filterwarnings('ignore')
 
 @st.cache_data(ttl=900)
 def load_data():
-    pitches_df = pd.read_csv('app_data.csv')
+    pitches_df = pd.read_csv('mlb_pitches.csv')
     global_means = pd.read_csv("global_means.csv")
 
-    pitches_df = hf.prepare_data(pitches_df, game_only=False)
+    pitches_df = hf.prepare_data(pitches_df)
 
     return pitches_df, global_means
 
@@ -59,15 +59,15 @@ def simulate_synthetic_dataframe(recent_rows, batter_df, pitch_type, balls, stri
         columns=['PlateLocSideBucket', 'PlateLocHeightBucket', 'CountEncoded']
     )
 
-    synthetic_data['PitchType'] = pitch_type
+    synthetic_data['pitch_type'] = pitch_type
 
-    pitcher_throws_mode = (recent_rows['PitcherThrows'].mode().iloc[0])
+    pitcher_throws_mode = (recent_rows['p_throws'].mode().iloc[0])
 
-    synthetic_data['PitcherThrows'] = pitcher_throws_mode
+    synthetic_data['p_throws'] = pitcher_throws_mode
 
     batter_side_mode = (
-        batter_df.loc[batter_df['PitcherThrows'] == pitcher_throws_mode]
-        .sort_values(by='UTCDateTime', ascending=False)
+        batter_df.loc[batter_df['p_throws'] == pitcher_throws_mode]
+        .sort_values(by=['game_date', 'game_pk'], ascending=False)
         .head(100)
         .BatterSide
         .mode().iloc[0]
@@ -77,16 +77,16 @@ def simulate_synthetic_dataframe(recent_rows, batter_df, pitch_type, balls, stri
     synthetic_data['PlatoonStateEncoded'] = platoon_state_encoded
 
     synthetic_data['BatterLeagueEncoded'] = (
-        batter_df.sort_values('UTCDateTime', ascending=False)
+        batter_df.sort_values(['game_date', 'game_pk'], ascending=False)
         .iloc[0]['BatterLeagueEncoded']
     )
 
-    medians = recent_rows[recent_rows['PitchType'] == pitch_type].sort_values(by='UTCDateTime', ascending=False)[median_features].median().to_dict()
+    medians = recent_rows[recent_rows['pitch_type'] == pitch_type].sort_values(by=['game_date', 'game_pk'], ascending=False)[median_features].median().to_dict()
 
     for feature, median_value in medians.items():
         synthetic_data[feature] = median_value
     
-    pitch_group_mode = recent_rows.loc[recent_rows['PitchType'] == pitch_type, 'PitchGroupEncoded'].mode()[0]
+    pitch_group_mode = recent_rows.loc[recent_rows['pitch_type'] == pitch_type, 'PitchGroupEncoded'].mode()[0]
     synthetic_data['PitchGroupEncoded'] = pitch_group_mode
 
     if not is_first_time and st.session_state['selected_zone'] is not None:
@@ -98,8 +98,8 @@ def simulate_synthetic_dataframe(recent_rows, batter_df, pitch_type, balls, stri
         synthetic_data['prev_pitch_PitchCall'] = recent_rows['prev_pitch_PitchCall']
         synthetic_data['prev_pitch_SamePitch'] = recent_rows['prev_pitch_SamePitch']
 
-    synthetic_data['Balls'] = balls
-    synthetic_data['Strikes'] = strikes
+    synthetic_data['balls'] = balls
+    synthetic_data['strikes'] = strikes
 
     return synthetic_data
 
@@ -107,24 +107,24 @@ def simulate_synthetic_dataframe(recent_rows, batter_df, pitch_type, balls, stri
 def calculate_batter_metrics(synthetic_df, batter_df):
     platoon_state_encoded = synthetic_df['PlatoonStateEncoded'].iloc[0]
     pitch_group_encoded = synthetic_df['PitchGroupEncoded'].iloc[0]
-    pitcher_throws = synthetic_df['PitcherThrows'].iloc[0]
+    pitcher_throws = synthetic_df['p_throws'].iloc[0]
 
-    batter_id = batter_df['BatterId'].mode().iloc[0]
+    batter_id = batter_df['batter'].mode().iloc[0]
 
-    synthetic_df['PlateLocSide'] = (synthetic_df['PlateLocSideBucket'].astype(float))
-    synthetic_df['PlateLocHeight'] = (synthetic_df['PlateLocHeightBucket'].astype(float))
+    synthetic_df['plate_x'] = (synthetic_df['PlateLocSideBucket'].astype(float))
+    synthetic_df['plate_z'] = (synthetic_df['PlateLocHeightBucket'].astype(float))
 
     scaled_columns = [f"{feature}_Scaled" for feature in numerical_features]
     synthetic_df[scaled_columns] = scaler.transform(synthetic_df[numerical_features])
 
     synthetic_df = hf.add_probabilities(synthetic_df)
-    batter_df = hf.add_probabilities(batter_df[batter_df['PitcherThrows'] == pitcher_throws])
+    batter_df = hf.add_probabilities(batter_df[batter_df['p_throws'] == pitcher_throws])
 
     _, pivoted_values = hf.calculate_shrunken_means(
         batter_df, global_means
     )
 
-    synthetic_df['BatterId'] = batter_id
+    synthetic_df['batter'] = batter_id
     synthetic_df['Model'] = pitcher_throws
 
     synthetic_df = hf.compute_batter_stuff_value(synthetic_df, pivoted_values)
@@ -133,10 +133,10 @@ def calculate_batter_metrics(synthetic_df, batter_df):
 
 
 def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
-    columns_to_drop = [col for col in recent_rows.columns if col.startswith('DeltaRunValue_') or col.startswith('prob_')]
+    columns_to_drop = [col for col in recent_rows.columns if col.startswith('delta_run_exp_') or col.startswith('prob_')]
     recent_rows = recent_rows.drop(columns=columns_to_drop)
 
-    columns_to_drop = [col for col in batter_df.columns if col.startswith('DeltaRunValue_') or col.startswith('prob_')]
+    columns_to_drop = [col for col in batter_df.columns if col.startswith('delta_run_exp_') or col.startswith('prob_')]
     batter_df = batter_df.drop(columns=columns_to_drop)
 
     if not recent_rows.index.is_unique:
@@ -144,9 +144,10 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
 
     if not batter_df.index.is_unique:
         batter_df = batter_df.reset_index(drop=True)
-
+    
+    ### Issue: No pitcher_id or batter_id variables?
     if not recent_rows.empty:
-        pitcher_throws_mode = recent_rows['PitcherThrows'].mode().iloc[0]
+        pitcher_throws_mode = recent_rows['p_throws'].mode().iloc[0]
     else:
         raise ValueError(f"No matching rows found for pitcher: {pitcher_id}")
 
@@ -157,12 +158,12 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
 
     platoon_state_encoded = platoon_state_mapping[(pitcher_throws_mode, batter_side_mode)]
 
-    pitch_type_counts = recent_rows['TaggedPitchType'].value_counts()
+    pitch_type_counts = recent_rows['pitch_type'].value_counts()
     qualifying_pitch_types = pitch_type_counts[pitch_type_counts >= 0.01 * len(recent_rows)].index.tolist()
 
     pitch_types = (
-        recent_rows[recent_rows['PitchType'].isin(qualifying_pitch_types)]
-        .groupby('PitchType')
+        recent_rows[recent_rows['pitch_type'].isin(qualifying_pitch_types)]
+        .groupby('pitch_type')
         .size()
         .sort_values(ascending=False)
         .index.tolist()
@@ -172,20 +173,21 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
     pitch_command = []
 
     for pitch_type in pitch_types:
-        pitch_type_df = recent_rows[recent_rows['PitchType'] == pitch_type]
+        pitch_type_df = recent_rows[recent_rows['pitch_type'] == pitch_type]
 
         if pitch_type_df.empty:
             continue
 
         pitch_group_encoded = (
             pitch_type_df.loc[
-                (pitch_type_df['PitchType'] == pitch_type), 
+                (pitch_type_df['pitch_type'] == pitch_type), 
                 'PitchGroupEncoded'
             ].mode()[0]
         )
 
         pitch_type_df = calculate_batter_metrics(pitch_type_df, batter_df)
 
+        ### Issue: No 'VertRelAngle' and 'HorzRelAngle' data
         rel_angles = pitch_type_df[['VertRelAngle', 'HorzRelAngle']].dropna()
         kmeans = KMeans(n_clusters=1, random_state=100)
         kmeans.fit(rel_angles)
@@ -199,14 +201,14 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
 
         expected_features = model.get_booster().feature_names
 
-        pitch_type_df['Balls'] = balls
-        pitch_type_df['Strikes'] = strikes
+        pitch_type_df['balls'] = balls
+        pitch_type_df['strikes'] = strikes
 
         rank_df = pitch_type_df[expected_features].copy()
         rank_df['ExpectedRunValue'] = model.predict(rank_df)
         mean_value = rank_df['ExpectedRunValue'].mean()
 
-        if pitch_type in ['Fastball', 'Sinker']:
+        if pitch_type in ['FF', 'SI']:
                 mean_value -= ((balls - strikes) + 1) * 0.005
             
         pitch_type_means.append((pitch_type, mean_value))
@@ -225,7 +227,7 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
 
                 if balls == 0 and strikes == 0:
                     synthetic_df = simulate_synthetic_dataframe(recent_rows, batter_df, pitch_type, balls, strikes)
-                    synthetic_df['Year'] = 2024
+                    synthetic_df['year'] = 2024
                     synthetic_df = calculate_batter_metrics(synthetic_df, batter_df)
                     st.session_state[f'synthetic_data_{pitch_type}'] = synthetic_df
                 else:
@@ -255,7 +257,7 @@ def generate_individual_figs(recent_rows, batter_df, model, balls, strikes):
 
                 command_score = pitch_command_dict.get(pitch_type, 1)
 
-                if len(recent_rows[recent_rows['PitchType'] == pitch_type]) >= 20:
+                if len(recent_rows[recent_rows['pitch_type'] == pitch_type]) >= 20:
                     sigma = (max(0.25, min(command_score, 2)) * (0.7 + ((balls - strikes) * 0.1)))
                 else: 
                     sigma = 0.8 + ((balls - strikes) * 0.1)
@@ -305,78 +307,11 @@ def map_ids_to_names(pitches_df, id_list, id_column, name_column):
     
     return names_list
 
+pitchers = pitches_df['PitcherId'].unique()
+batters = pitches_df['BatterId'].unique()
 
-### PUT PITCHER IDS AND BATTER IDS HERE
-pitchers = [
-            [823227, 1000121636], #Zeldin            
-            [809709, 1000051331], ### Charlie Goldstein
-            [1000110601], ### Alton Davis
-            [815145, 10108696], ### Bradley Stewart
-            [809714, 1000096939], ### Collin Caldwell
-            [90000235966], ### Zach Harris
-            [1000295488], ### Jordan Stephens
-            [10056544, 1000175820], ### Brian Curley
-            [1000241035, 1000164129, 10053243], ### Davis Chastain
-            [803287, 1000110595], ### Leighton Finley
-            [1000113633], ### Asher Sabom
-            [1000088474, 702614], ### Matthew Hoskins
-            [1000187635, 701368], ### Kolten Smith
-            [1000233770, 10006526], ### JT Quinn
-            [1000092911, 695727], ### Eric Hammond
-            [90000256197], ### Logan Spivey
-            [10268112], ### Nate Taylor
-            [823230, 1000076701], ### Tyler McLoughlin
-            [1000269766, 10086131], ### Paul Farley
-            [10276837, 1000057096, 1000334133], ### Zach Brown
-            [809712, 1000066681], ### DJ Radtke
-            [812810, 10064790], ### Wyatt Land
-            [1000208929], ### Justin Byrd
-            [823232, 10053126], ### Luke Wiltrakis
-            [10104083], ### Lucas Morici
-            [90000217140] ### Ethan Sutton
-]
-
-### PUT BATTER IDS HERE
-batters = [
-            #[1000069469, 695773,1000391664,1000390931], ### Jaret Nelson
-            [1000036170], ### Robert Moya
-            #[695477, 1000052101], ### Jon Embury
-            #[803325, 1000051217], ### Sam McAleer
-            [1000051534], ### Mac Moise
-            [1000077137], ### Jason Roberts
-            [10092042], ### Javier Gorostola
-            #[1000255777], ### Keaton Kangas
-            [1000057922], ### Jake Mummau
-            #[823754, 1000119891], ### Tyler Herb
-            #[1000013128, 687408], ### Vincent Samuel
-            #[1000051145, 695301], ### EJ BURNS
-            [1000051529], ### Jake McKee
-            #[1000257371, 1000061901], ### Nathan Gagnon
-            #[1000075636], ## DJ Pirela
-            #[90000255731, 828714], ### Aidan Corn
-            #[274214, 1000232995], ### Connor Fosnow
-            [1000090899], ### Harrison Povey
-             #[1000069469, 695773,1000391664,1000390931], ### John Holley
-            [1000122764], ### Cole Griffith
-            [1000193114], ### Colin Hynek
-            [1000108237, 1000133232], ### Jesse Donohoe
-            #[1000107443, 702705], ### Carter Bailey
-            #[1000076894, 802001], ### Andon Lewis
-            #[10000375, 1000236751], ### William Maginnis
-            #[1000255777], ### Austin Sellers
-            #[1000077433], ### Brandon Davis
-            [1000128379, 824774], ### Nick Garagozzo
-            #[1000013128, 687408], ### CJ Blackwell
-            [1000091179], ### Jae Williams
-            #[1000255611], ### Cooper Milford
-            [1000198988, 90000255774], ### Michael Maginnis
-            #[1000075636], ## John Beverley
-            #[90000255731, 828714], ### Austin Killingsworth
-            [1000086400] ### Kaleb freeman
-]
-
-pitcher_names = map_ids_to_names(pitches_df, pitchers, 'PitcherId', 'Pitcher')
-batter_names = map_ids_to_names(pitches_df, batters, 'BatterId', 'Batter')
+pitcher_names = map_ids_to_names(pitches_df, pitchers, 'pitcher', 'Pitcher')
+batter_names = map_ids_to_names(pitches_df, batters, 'batter', 'Batter')
 
 default_pitcher = pitcher_names[0][0] if pitcher_names and pitcher_names[0] else None
 default_batter = batter_names[0][0] if batter_names and batter_names[0] else None
@@ -393,7 +328,7 @@ st.write(f"Selected Batter: {batter}")
 pitcher_df = pitches_df[pitches_df['Pitcher'] == pitcher]
 batter_df = pitches_df[pitches_df['Batter'] == batter]
 
-recent_rows = pitcher_df[pitcher_df['PitchType'] != 'Undefined'].sort_values(by='UTCDateTime', ascending=False).head(500)
+recent_rows = pitcher_df[pitcher_df['pitch_type'] != 'Undefined'].sort_values(by=['game_date', 'game_pk'], ascending=False).head(500)
 
 if st.session_state["previous_batter"] != batter or st.session_state["previous_pitcher"] != pitcher:
     st.session_state["selected_pitch"] = None
@@ -411,12 +346,12 @@ if st.button("Reset All Selections"):
     if "prev_pitch" in st.session_state:
         del st.session_state["prev_pitch"]
 
-pitch_type_counts = recent_rows['TaggedPitchType'].value_counts()
+pitch_type_counts = recent_rows['pitch_type'].value_counts()
 qualifying_pitch_types = pitch_type_counts[pitch_type_counts >= 0.01 * len(recent_rows)].index.tolist()
 
 pitch_types = (
-    recent_rows[recent_rows['PitchType'].isin(qualifying_pitch_types)]
-    .groupby('PitchType')
+    recent_rows[recent_rows['pitch_type'].isin(qualifying_pitch_types)]
+    .groupby('pitch_type')
     .size()
     .sort_values(ascending=False)
     .index.tolist()
@@ -533,9 +468,9 @@ if st.button("Generate Heatmaps"):
     else:
         recent_rows['prev_pitch'] = True
 
-        recent_rows['prev_pitch_RelSpeed'] = recent_rows[recent_rows['PitchType'] == st.session_state["selected_pitch"]]['RelSpeed'].median()
-        recent_rows['prev_pitch_HorzBreak'] = recent_rows[recent_rows['PitchType'] == st.session_state["selected_pitch"]]['HorzBreak'].median()
-        recent_rows['prev_pitch_InducedVertBreak'] = recent_rows[recent_rows['PitchType'] == st.session_state["selected_pitch"]]['InducedVertBreak'].median()
+        recent_rows['prev_pitch_RelSpeed'] = recent_rows[recent_rows['pitch_type'] == st.session_state["selected_pitch"]]['release_speed'].median()
+        recent_rows['prev_pitch_HorzBreak'] = recent_rows[recent_rows['pitch_type'] == st.session_state["selected_pitch"]]['pfx_x'].median()
+        recent_rows['prev_pitch_InducedVertBreak'] = recent_rows[recent_rows['pitch_type'] == st.session_state["selected_pitch"]]['pfx_z'].median()
         recent_rows['prev_pitch_PlateLocSideBucket'] = selected_x
         recent_rows['prev_pitch_PlateLocHeightBucket'] = selected_y
         recent_rows['prev_pitch_PitchCall'] = st.session_state['selected_pitch_call']
@@ -549,7 +484,7 @@ if st.button("Generate Heatmaps"):
             4
         )
 
-        recent_rows['prev_pitch_SamePitch'] = (recent_rows['PitchType'] == recent_rows['prev_pitch_PitchType']).astype(int)
+        recent_rows['prev_pitch_SamePitch'] = (recent_rows['pitch_type'] == recent_rows['prev_pitch_PitchType']).astype(int)
 
         prev_pitch_invalid = recent_rows['prev_pitch'].isna() | (recent_rows['prev_pitch'] == False)
         columns_to_update = [

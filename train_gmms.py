@@ -4,11 +4,12 @@ import helper_functions as hf
 import warnings
 warnings.filterwarnings('ignore')
 
-pitches_df = pd.read_csv('all_pitches.csv')
+pitches_df = pd.read_csv('mlb_pitches.csv')
 
-pitches_df = hf.prepare_data(pitches_df, game_only=True)
+pitches_df = hf.prepare_data(pitches_df)
 
 gmm_models = hf.fit_gmms(pitches_df)
 
 hf.save_gmm_models(gmm_models, save_dir="gmm_models")
-hf.calculate_global_means(pitches_df)
+global_means = hf.calculate_global_means(pitches_df)
+global_means.to_csv('global_means.csv')
