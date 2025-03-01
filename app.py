@@ -69,7 +69,7 @@ def simulate_synthetic_dataframe(recent_rows, batter_df, pitch_type, balls, stri
         batter_df.loc[batter_df['p_throws'] == pitcher_throws_mode]
         .sort_values(by=['game_date', 'game_pk'], ascending=False)
         .head(100)
-        .BatterSide
+        .stand
         .mode().iloc[0]
     )
 
